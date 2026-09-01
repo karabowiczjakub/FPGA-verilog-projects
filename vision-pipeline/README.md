@@ -1,37 +1,27 @@
-
 # FPGA Vision Pipeline
 
-This project contains a selected FPGA-based image processing pipeline implemented mainly in Verilog using Xilinx Vivado.
+This folder contains selected files from an FPGA-based vision processing project implemented mainly in Verilog using Xilinx Vivado.
 
-The design was developed during reconfigurable systems / FPGA laboratory classes. The main idea of the project is to process video data as a continuous pixel stream and implement selected image processing operations directly in FPGA logic.
+The project was developed during reconfigurable systems / FPGA laboratory classes. The main goal was to implement a simple real-time image processing pipeline in FPGA logic. The system processes a video stream pixel by pixel and applies several operations such as color conversion, segmentation, filtering and centroid calculation.
 
 ## Project overview
 
-The implemented system processes a video stream pixel by pixel. Each pixel is passed through several processing stages together with synchronization signals:
+The design is based on stream processing. Pixel data is processed together with video synchronization signals:
 
 * `de` – data enable,
 * `hsync` – horizontal synchronization,
 * `vsync` – vertical synchronization.
 
-The project includes modules responsible for:
+The main processing module is `vision_system.v`. It receives an RGB pixel stream, processes it through several stages and outputs one of the selected intermediate or final results depending on the value of the `sw` input.
 
-* input pixel format conversion,
-* RGB to YCbCr conversion,
-* thresholding / binary mask generation,
-* skin-color segmentation,
-* median filtering,
-* centroid calculation,
-* centroid visualization,
-* output pixel format conversion.
-
-The design demonstrates a typical FPGA image processing approach, where data flows through a hardware pipeline and each module performs a specific operation on the stream.
+The project demonstrates a typical FPGA image processing approach, where data flows through a hardware pipeline and each module performs a specific operation on the stream.
 
 ## Main processing pipeline
 
-The general processing path can be described as:
+The general structure of the project is:
 
 ```text
-camera/video input
+video input / testbench input
         |
         v
 preprocessor
@@ -39,66 +29,43 @@ preprocessor
         v
 vision_system
         |
-        +--> RGB delay path
+        +--> delayed original RGB path
         |
         +--> RGB to YCbCr conversion
         |
-        +--> LUT-based binary mask
+        +--> RGB LUT-based binary mask
         |
         +--> YCbCr skin-color thresholding
         |
-        +--> median 5x5 filtering
+        +--> 5x5 median-like filtering
         |
         +--> centroid calculation
         |
         +--> centroid visualization
         |
         v
-postprocess
-        |
-        v
-video output
+postprocess / simulation output
 ```
-
-The main module of the image processing part is `vision_system.v`.
 
 ## Implemented modules
 
-### `preprocessor.v`
-
-This module converts the input video pixel format before the image is processed by the main vision system.
-
-In this project, the input camera format is treated as:
-
-```text
-BRG = {B, R, G}
-```
-
-and converted to the internal RGB format:
-
-```text
-RGB = {R, G, B}
-```
-
-This allows the remaining modules to operate on a consistent RGB pixel representation.
-
 ### `vision_system.v`
 
-This is the main image processing module. It connects the individual processing blocks and selects the output image depending on the value of the `sw` input.
+This is the main image processing module.
 
-The module includes:
+It connects the individual stages of the pipeline:
 
-* original RGB stream delay,
-* synchronization signal delay,
-* RGB to YCbCr conversion,
-* LUT-based thresholding,
+* original RGB delay path,
+* synchronization signal delay path,
+* RGB to YCbCr conversion IP,
+* RGB LUT-based thresholding,
 * YCbCr skin-color segmentation,
-* median filtering,
+* 5x5 median-like filtering,
 * centroid calculation,
 * centroid visualization,
-* output multiplexer controlled by switches.
+* switch-controlled output multiplexer.
 
-The module parameters allow changing image dimensions, for example for full-resolution processing or smaller simulation cases:
+The module has configurable image parameters:
 
 ```verilog
 parameter IMG_W = 1920
@@ -106,136 +73,39 @@ parameter IMG_H = 1080
 parameter H_SIZE = 2200
 ```
 
-For simulation, smaller values such as `64 x 64` can be used to reduce simulation time.
-
-### `rgb2ycbcr_0_stub.vhdl`
-
-This file is a Vivado-generated stub for the RGB to YCbCr conversion IP core.
-
-The IP block converts RGB pixel data into the YCbCr color space. The YCbCr representation is then used for skin-color segmentation, where selected ranges of chrominance components are checked.
-
-The main signals are:
-
-* `pixel_in` – RGB input pixel,
-* `pixel_out` – YCbCr output pixel,
-* `de_in`, `hsync_in`, `vsync_in` – input synchronization signals,
-* `de_out`, `hsync_out`, `vsync_out` – output synchronization signals.
-
-### LUT-based thresholding
-
-Inside `vision_system.v`, three LUT blocks are used for the red, green and blue components:
+For simulation, smaller values are used, for example:
 
 ```verilog
-LUT lut_r
-LUT lut_g
-LUT lut_b
+IMG_W = 64
+IMG_H = 64
+H_SIZE = 83
 ```
 
-Each LUT checks whether a given color component is inside a selected range. The binary output is calculated as:
+This reduces simulation time.
 
-```verilog
-bin_out = lut_r_out & lut_g_out & lut_b_out;
-```
+### `preprocessor.v`
 
-This creates a simple binary mask based on RGB component ranges.
+This module converts the input video pixel order before the data enters the main vision system.
 
-### YCbCr skin-color thresholding
-
-The project also implements segmentation based on the YCbCr color space.
-
-The chrominance components are extracted as:
-
-```verilog
-cb_val = pixel_ycbcr[15:8];
-cr_val = pixel_ycbcr[7:0];
-```
-
-The skin-color mask is generated using threshold values:
-
-```verilog
-Ta = 85
-Tb = 135
-Tc = 135
-Td = 180
-```
-
-The pixel is classified as belonging to the selected color range when:
+The input format is treated as:
 
 ```text
-Cb > Ta and Cb < Tb and Cr > Tc and Cr < Td
+BRG = {B, R, G}
 ```
 
-If the condition is true, the output mask value is white:
+The output format used inside the vision system is:
 
 ```text
-255
+RGB = {R, G, B}
 ```
 
-otherwise it is black:
-
-```text
-0
-```
-
-### `median5x5.v`
-
-This module performs median-like filtering on a binary mask using a 5x5 context window.
-
-The module builds a local 5x5 pixel neighborhood using registers and BRAM-based line delays. It then counts active pixels inside the 5x5 window.
-
-The output pixel is set to white when more than 12 pixels in the 5x5 window are active:
-
-```verilog
-sum_ones > 12
-```
-
-This removes small isolated noise and improves the quality of the binary mask before centroid calculation.
-
-### `centroid.v`
-
-This module calculates the centroid of the detected binary region.
-
-The module scans the image and accumulates image moments:
-
-```text
-m00 – number of active mask pixels
-m10 – sum of x coordinates of active pixels
-m01 – sum of y coordinates of active pixels
-```
-
-At the end of the frame, the centroid position is calculated as:
-
-```text
-x = m10 / m00
-y = m01 / m00
-```
-
-If no active pixels are detected, the centroid is reset to zero.
-
-### `accumulator_unsigned.v`
-
-This is a reusable unsigned accumulator module.
-
-It is used in the centroid calculation to accumulate coordinate sums for active mask pixels. The module adds the input value to the output register when `ce` is active.
-
-### `vis_centroid.v`
-
-This module visualizes the calculated centroid on the output image.
-
-It tracks the current pixel position and draws a red cross at the calculated centroid coordinates:
-
-```text
-vertical line: current x position equals centroid x
-horizontal line: current y position equals centroid y
-```
-
-The output pixel is changed to red when the current pixel belongs to the cross.
+This keeps the internal pixel representation consistent for the rest of the pipeline.
 
 ### `postprocess.v`
 
-This module converts the internal RGB pixel format back to the output video format.
+This module converts the internal RGB pixel format back to the output format.
 
-The internal format is:
+The input format is:
 
 ```text
 RGB = {R, G, B}
@@ -247,28 +117,208 @@ The output format is arranged as:
 BRG = {B, R, G}
 ```
 
-The output is extended to 36 bits by adding zero padding to each color component.
+The output pixel is extended to 36 bits by adding zero padding to each color component.
+
+### `rgb2ycbcr_0_stub.vhdl`
+
+This file is a Vivado-generated stub for the RGB to YCbCr conversion IP core.
+
+The IP block converts RGB pixels into the YCbCr color space. The YCbCr representation is useful for color-based segmentation because chrominance components can be thresholded independently from brightness.
+
+The main signals are:
+
+* `pixel_in` – RGB input pixel,
+* `pixel_out` – YCbCr output pixel,
+* `de_in`, `hsync_in`, `vsync_in` – input synchronization signals,
+* `de_out`, `hsync_out`, `vsync_out` – output synchronization signals.
+
+This file is only a stub declaration. The actual IP core must be generated or included in the Vivado project.
+
+### RGB LUT-based thresholding
+
+Inside `vision_system.v`, three LUT blocks are used:
+
+```verilog
+LUT lut_r
+LUT lut_g
+LUT lut_b
+```
+
+Each LUT checks one RGB component. The final binary mask is calculated as:
+
+```verilog
+bin_out = lut_r_out & lut_g_out & lut_b_out;
+```
+
+If all three component conditions are true, the pixel is classified as belonging to the selected range.
+
+### YCbCr skin-color segmentation
+
+The project also implements segmentation in the YCbCr color space.
+
+The chrominance components are extracted from the converted pixel:
+
+```verilog
+cb_val = pixel_ycbcr[15:8];
+cr_val = pixel_ycbcr[7:0];
+```
+
+The threshold values used in the code are:
+
+```verilog
+Ta = 85
+Tb = 135
+Tc = 135
+Td = 180
+```
+
+The binary mask is generated using the condition:
+
+```text
+Cb > Ta and Cb < Tb and Cr > Tc and Cr < Td
+```
+
+If the condition is true, the output value is white:
+
+```text
+255
+```
+
+Otherwise, the output value is black:
+
+```text
+0
+```
+
+### `median5x5.v`
+
+This module performs 5x5 context filtering on a binary mask.
+
+It builds a 5x5 neighborhood around the currently processed pixel using registers and BRAM-based line delays. Then it counts how many pixels in the 5x5 window are active.
+
+The output is set to white when more than 12 pixels in the 5x5 window are active:
+
+```verilog
+sum_ones > 12
+```
+
+This removes small isolated noise from the binary mask and improves the input for centroid calculation.
+
+The module also delays synchronization signals so that the output mask remains aligned with `de`, `hsync` and `vsync`.
+
+### `centroid.v`
+
+This module calculates the centroid of the detected binary region.
+
+It scans the image and accumulates image moments:
+
+```text
+m00 – number of active pixels
+m10 – sum of x coordinates of active pixels
+m01 – sum of y coordinates of active pixels
+```
+
+At the end of the frame, the centroid position is calculated as:
+
+```text
+x = m10 / m00
+y = m01 / m00
+```
+
+The division is performed using a divider IP block:
+
+```verilog
+divider_32_21_0
+```
+
+If no active pixels are detected in the frame, the centroid coordinates are reset to zero.
+
+### `accumulator_unsigned.v`
+
+This is a reusable unsigned accumulator module.
+
+It is used by `centroid.v` to accumulate coordinate sums. When the `ce` signal is active, the module adds the input value to the current accumulated value.
+
+### `vis_centroid.v`
+
+This module visualizes the calculated centroid.
+
+It tracks the current pixel position and draws a red cross at the calculated centroid coordinates. The red marker is generated when:
+
+```text
+current x position equals centroid x
+or
+current y position equals centroid y
+```
+
+The output pixel is changed to red for the marker position.
+
+### `tb_hdmi.v`
+
+This is the main Verilog testbench for simulation.
+
+It connects:
+
+* `hdmi_in.v` – simulated video input,
+* `vision_system.v` – tested vision pipeline,
+* `hdmi_out.v` – simulated video output.
+
+In the testbench, the image size is reduced to 64x64 pixels:
+
+```verilog
+vision_system #(
+    .IMG_W(64),
+    .IMG_H(64),
+    .H_SIZE(83)
+)
+```
+
+This makes simulation faster and easier to run.
+
+### `hdmi_in.v`
+
+This file simulates a video input source.
+
+It generates:
+
+* pixel clock,
+* `de`,
+* `hsync`,
+* `vsync`,
+* RGB pixel data.
+
+The simulation resolution used in this file is 64x64 pixels.
+
+### `hdmi_out.v`
+
+This file logs the simulated output video stream to `.ppm` image files.
+
+It receives processed RGB data from the testbench and saves output frames in PPM format, for example:
+
+```text
+out_00.ppm
+out_01.ppm
+...
+```
+
+This allows the result of the FPGA image processing pipeline to be checked as image files after simulation.
 
 ## Switch-controlled output modes
 
-The `vision_system.v` module uses the `sw` input to select which processing stage is displayed at the output.
+The `sw` input in `vision_system.v` selects which processing result is sent to the output.
 
-Example output modes:
+| Switch value | Output image                                     |
+| ------------ | ------------------------------------------------ |
+| `0`          | delayed original RGB image                       |
+| `1`          | RGB to YCbCr conversion result                   |
+| `2`          | RGB LUT-based binary mask                        |
+| `3`          | YCbCr threshold binary mask                      |
+| `4`          | median-filtered binary mask                      |
+| `5`          | median-filtered mask with centroid visualization |
 
-| Switch value | Output mode                             |
-| ------------ | --------------------------------------- |
-| `0`          | Original delayed RGB image              |
-| `1`          | YCbCr output image                      |
-| `2`          | RGB LUT-based binary mask               |
-| `3`          | YCbCr skin-color binary mask            |
-| `4`          | Median-filtered binary mask             |
-| `5`          | Median mask with centroid visualization |
+This makes it possible to observe intermediate stages of the pipeline without modifying the HDL code.
 
-This makes it possible to observe intermediate processing stages without changing the HDL code.
-
-## Repository structure
-
-Recommended structure of this project:
+## Recommended repository structure
 
 ```text
 vision-pipeline/
@@ -280,94 +330,105 @@ vision-pipeline/
 │   ├── postprocess.v
 │   ├── preprocessor.v
 │   ├── vis_centroid.v
-│   ├── vision_system.v
+│   └── vision_system.v
+│
+├── src/ip/
 │   └── rgb2ycbcr_0_stub.vhdl
 │
 ├── sim/
-│   ├── tb_hdmi.tcl
-│   ├── tb_hdmi_vhdl.prj
-│   └── tb_hdmi_vlog.prj
+│   ├── tb_hdmi.v
+│   ├── hdmi_in.v
+│   ├── hdmi_out.v
+│   └── tb_hdmi.tcl
 │
 ├── docs/
 │   └── screenshots/
 │
 └── generated/
+    ├── tb_hdmi_vhdl.prj
+    ├── tb_hdmi_vlog.prj
     └── tb_hdmi_behav.wdb
 ```
 
-## Uploaded / included files
+## File placement
 
-The currently documented source files are:
+| File                     | Recommended location | Description                                         |
+| ------------------------ | -------------------- | --------------------------------------------------- |
+| `vision_system.v`        | `src/`               | Main image processing pipeline                      |
+| `preprocessor.v`         | `src/`               | Converts input BRG-like pixel order to internal RGB |
+| `postprocess.v`          | `src/`               | Converts internal RGB to output format              |
+| `median5x5.v`            | `src/`               | 5x5 context filtering of binary mask                |
+| `centroid.v`             | `src/`               | Centroid calculation from binary mask               |
+| `accumulator_unsigned.v` | `src/`               | Unsigned accumulator used by centroid logic         |
+| `vis_centroid.v`         | `src/`               | Draws centroid marker on output image               |
+| `rgb2ycbcr_0_stub.vhdl`  | `src/ip/`            | Stub for Vivado RGB to YCbCr IP                     |
+| `tb_hdmi.v`              | `sim/`               | Main simulation testbench                           |
+| `hdmi_in.v`              | `sim/`               | Simulated HDMI/video input                          |
+| `hdmi_out.v`             | `sim/`               | Simulated HDMI/video output writer                  |
+| `tb_hdmi.tcl`            | `sim/`               | TCL script for simulation                           |
+| `tb_hdmi_vhdl.prj`       | `generated/`         | Vivado-generated simulation project file            |
+| `tb_hdmi_vlog.prj`       | `generated/`         | Vivado-generated simulation project file            |
+| `tb_hdmi_behav.wdb`      | `generated/`         | Vivado waveform database                            |
 
-| File                     | Suggested location  | Description                                            |
-| ------------------------ | ------------------- | ------------------------------------------------------ |
-| `preprocessor.v`         | `src/`              | Converts input BRG pixel format to internal RGB format |
-| `postprocess.v`          | `src/`              | Converts internal RGB format to output BRG-like format |
-| `vision_system.v`        | `src/`              | Main image processing pipeline                         |
-| `median5x5.v`            | `src/`              | 5x5 binary mask filtering                              |
-| `centroid.v`             | `src/`              | Centroid calculation from binary mask                  |
-| `accumulator_unsigned.v` | `src/`              | Unsigned accumulator used by centroid logic            |
-| `vis_centroid.v`         | `src/`              | Draws centroid marker on the output image              |
-| `rgb2ycbcr_0_stub.vhdl`  | `src/ip/` or `src/` | Stub declaration for Vivado RGB to YCbCr IP            |
-| `tb_hdmi.tcl`            | `sim/`              | Simulation TCL script                                  |
-| `tb_hdmi_vhdl.prj`       | `sim/`              | Vivado simulator VHDL project file                     |
-| `tb_hdmi_vlog.prj`       | `sim/`              | Vivado simulator Verilog project file                  |
-| `tb_hdmi_behav.wdb`      | `generated/`        | Vivado waveform database from behavioral simulation    |
+## Generated and missing dependencies
 
-## Notes about generated files
+Some blocks used in this design are generated by Vivado or come from the original laboratory project structure. They may be required to rebuild the project completely.
 
-Some files are generated by Vivado and may depend on the original local project structure.
+Known dependencies include:
 
-In particular:
+```text
+rgb2ycbcr_0
+LUT
+delay_line
+delayLineBRAM_WP
+divider_32_21_0
+```
 
-* `tb_hdmi_behav.wdb` is a waveform database file,
-* `tb_hdmi_vhdl.prj` and `tb_hdmi_vlog.prj` contain simulation compile paths,
-* `rgb2ycbcr_0_stub.vhdl` is an IP stub, not the full implementation of the IP core.
+These modules/IP blocks are referenced by the source code, but not all of them are included as standalone HDL files in this folder.
 
-For a clean GitHub repository, the most important files are the HDL source files in `src/`. Generated files can be kept separately in `generated/` or omitted if they are not needed to understand the design.
+For this reason, the repository should be treated as a documented source-code archive of the laboratory implementation. To rebuild the project exactly, the missing Vivado IP blocks may need to be regenerated or copied from the original Vivado project.
 
-## External / generated dependencies
+## How to run / recreate the project
 
-The project may require additional Vivado IP or helper modules that are not fully included in this folder, for example:
+A typical reconstruction flow in Vivado is:
 
-* RGB to YCbCr Vivado IP,
-* LUT IP,
-* divider IP,
-* delay line modules,
-* BRAM-based delay line module,
-* HDMI/video testbench files.
+1. Create a new RTL project in Vivado.
+2. Add Verilog source files from `src/`.
+3. Add VHDL/IP stub files from `src/ip/`.
+4. Regenerate or add required Vivado IP blocks:
 
-If the project is recreated in Vivado, these blocks may need to be regenerated or copied from the original Vivado project.
-
-## How to recreate the project in Vivado
-
-A typical reconstruction flow is:
-
-1. Create a new Vivado RTL project.
-2. Add Verilog/VHDL files from the `src/` directory.
-3. Regenerate or add required Vivado IP blocks.
-4. Add simulation files from the `sim/` directory if available.
-5. Set the correct top-level module depending on the project structure.
-6. Run behavioral simulation.
-7. Run synthesis and implementation.
-8. Generate bitstream if the target board project is complete.
+   * RGB to YCbCr converter,
+   * LUT memories,
+   * divider IP,
+   * delay line modules.
+5. Add simulation files from `sim/`.
+6. Set `tb_hdmi.v` as the simulation top module.
+7. Run behavioral simulation.
+8. Check generated `.ppm` output images.
+9. If a complete hardware top module and constraints are available, run synthesis, implementation and bitstream generation.
 
 ## What this project demonstrates
 
-This project demonstrates practical FPGA concepts such as:
+This project demonstrates the following FPGA and digital design concepts:
 
-* stream-based image processing,
-* pipelined hardware design,
-* synchronization of video data and control signals,
-* binary image segmentation,
-* color-space based thresholding,
-* contextual filtering using a 5x5 window,
-* moment-based centroid calculation,
-* visualization of processing results,
-* integration of custom Verilog modules with Vivado-generated IP.
+* Verilog HDL design,
+* stream-based video processing,
+* pixel-by-pixel image processing,
+* pipeline latency,
+* synchronization of data and control signals,
+* RGB to YCbCr color conversion,
+* color thresholding,
+* binary mask generation,
+* 5x5 context filtering,
+* BRAM-based line buffering,
+* image moment accumulation,
+* centroid calculation,
+* visualization of calculated features,
+* simulation using a Verilog testbench,
+* integration of custom HDL modules with Vivado-generated IP.
 
 ## Status
 
-This repository folder is intended as documentation and source-code organization for the FPGA vision pipeline laboratory project.
+This folder documents the FPGA vision pipeline laboratory project.
 
-The code is preserved as a selected laboratory implementation and may require the original Vivado IP configuration or additional generated files to be rebuilt exactly.
+The most important HDL source files and simulation testbench files are included. Some Vivado-generated IP blocks and helper modules may still be required to fully rebuild the original project.
